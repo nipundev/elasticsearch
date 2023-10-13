@@ -55,17 +55,26 @@ final class DoubleVectorFixedBuilder implements DoubleVector.FixedBuilder {
             throw new IllegalStateException("expected to write [" + values.length + "] entries but wrote [" + nextIndex + "]");
         }
         nextIndex = -1;
+        DoubleVector vector;
         if (values.length == 1) {
-            return blockFactory.newConstantDoubleBlockWith(values[0], 1, preAdjustedBytes).asVector();
+            vector = blockFactory.newConstantDoubleBlockWith(values[0], 1, preAdjustedBytes).asVector();
+        } else {
+            vector = blockFactory.newDoubleArrayVector(values, values.length, preAdjustedBytes);
         }
-        return blockFactory.newDoubleArrayVector(values, values.length, preAdjustedBytes);
+        assert vector.ramBytesUsed() == preAdjustedBytes : "fixed Builders should estimate the exact ram bytes used";
+        return vector;
     }
 
     @Override
     public void close() {
         if (nextIndex >= 0) {
             // If nextIndex < 0 we've already built the vector
+            nextIndex = -1;
             blockFactory.adjustBreaker(-preAdjustedBytes, false);
         }
+    }
+
+    boolean isReleased() {
+        return nextIndex < 0;
     }
 }

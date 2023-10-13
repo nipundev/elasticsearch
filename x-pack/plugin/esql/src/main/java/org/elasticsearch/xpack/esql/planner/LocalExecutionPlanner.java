@@ -88,7 +88,6 @@ import org.elasticsearch.xpack.ql.type.DataTypes;
 import org.elasticsearch.xpack.ql.util.Holder;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -99,6 +98,7 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Stream;
 
+import static java.util.Arrays.asList;
 import static java.util.stream.Collectors.joining;
 import static org.elasticsearch.compute.lucene.LuceneOperator.NO_LIMIT;
 import static org.elasticsearch.compute.operator.LimitOperator.Factory;
@@ -239,9 +239,15 @@ public class LocalExecutionPlanner {
         if (physicalOperationProviders instanceof EsPhysicalOperationProviders == false) {
             throw new EsqlIllegalArgumentException("EsStatsQuery should only occur against a Lucene backend");
         }
-        EsPhysicalOperationProviders esProvider = (EsPhysicalOperationProviders) physicalOperationProviders;
+        if (statsQuery.stats().size() > 1) {
+            throw new EsqlIllegalArgumentException("EsStatsQuery currently supports only one field statistic");
+        }
 
-        Function<SearchContext, Query> querySupplier = EsPhysicalOperationProviders.querySupplier(statsQuery.query());
+        // for now only one stat is supported
+        EsStatsQueryExec.Stat stat = statsQuery.stats().get(0);
+
+        EsPhysicalOperationProviders esProvider = (EsPhysicalOperationProviders) physicalOperationProviders;
+        Function<SearchContext, Query> querySupplier = EsPhysicalOperationProviders.querySupplier(stat.filter(statsQuery.query()));
 
         Expression limitExp = statsQuery.limit();
         int limit = limitExp != null ? (Integer) limitExp.fold() : NO_LIMIT;
@@ -327,7 +333,7 @@ public class LocalExecutionPlanner {
             for (int i = 0; i < blocks.length; i++) {
                 blocks[i] = p.getBlock(mappedPosition[i]);
             }
-            return new Page(blocks);
+            return p.newPageAndRelease(blocks);
         } : Function.identity();
 
         return transformer;
@@ -374,6 +380,8 @@ public class LocalExecutionPlanner {
                 case "version" -> TopNEncoder.VERSION;
                 case "boolean", "null", "byte", "short", "integer", "long", "double", "float", "half_float", "datetime", "date_period",
                     "time_duration", "object", "nested", "scaled_float", "unsigned_long", "_doc" -> TopNEncoder.DEFAULT_SORTABLE;
+                // unsupported fields are encoded as BytesRef, we'll use the same encoder; all values should be null at this point
+                case "unsupported" -> TopNEncoder.UNSUPPORTED;
                 default -> throw new EsqlIllegalArgumentException("No TopN sorting encoder for type " + inverse.get(channel).type());
             };
         }
@@ -411,8 +419,8 @@ public class LocalExecutionPlanner {
         return source.with(
             new TopNOperatorFactory(
                 limit,
-                Arrays.asList(elementTypes),
-                Arrays.asList(encoders),
+                asList(elementTypes),
+                asList(encoders),
                 orders,
                 context.pageSize(2000 + topNExec.estimatedRowSize())
             ),
@@ -576,7 +584,8 @@ public class LocalExecutionPlanner {
 
     private PhysicalOperation planMvExpand(MvExpandExec mvExpandExec, LocalExecutionPlannerContext context) {
         PhysicalOperation source = plan(mvExpandExec.child(), context);
-        return source.with(new MvExpandOperator.Factory(source.layout.get(mvExpandExec.target().id()).channel()), source.layout);
+        int blockSize = 5000;// TODO estimate row size and use context.pageSize()
+        return source.with(new MvExpandOperator.Factory(source.layout.get(mvExpandExec.target().id()).channel(), blockSize), source.layout);
     }
 
     /**
@@ -760,12 +769,20 @@ public class LocalExecutionPlanner {
 
         public List<Driver> createDrivers(String sessionId) {
             List<Driver> drivers = new ArrayList<>();
-            for (DriverFactory df : driverFactories) {
-                for (int i = 0; i < df.driverParallelism.instanceCount; i++) {
-                    drivers.add(df.driverSupplier.apply(sessionId));
+            boolean success = false;
+            try {
+                for (DriverFactory df : driverFactories) {
+                    for (int i = 0; i < df.driverParallelism.instanceCount; i++) {
+                        drivers.add(df.driverSupplier.apply(sessionId));
+                    }
+                }
+                success = true;
+                return drivers;
+            } finally {
+                if (success == false) {
+                    Releasables.close(() -> Releasables.close(drivers));
                 }
             }
-            return drivers;
         }
 
         @Override
