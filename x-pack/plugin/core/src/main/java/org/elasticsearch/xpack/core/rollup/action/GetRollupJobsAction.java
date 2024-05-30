@@ -49,7 +49,7 @@ public class GetRollupJobsAction extends ActionType<GetRollupJobsAction.Response
         private String id;
 
         public Request(String id) {
-            if (Strings.isNullOrEmpty(id) || id.equals("*")) {
+            if (Strings.isNullOrEmpty(id) || "*".equals(id)) {
                 this.id = Metadata.ALL;
             } else {
                 this.id = id;
@@ -61,7 +61,7 @@ public class GetRollupJobsAction extends ActionType<GetRollupJobsAction.Response
         public Request(StreamInput in) throws IOException {
             super(in);
             id = in.readString();
-            if (Strings.isNullOrEmpty(id) || id.equals("*")) {
+            if (Strings.isNullOrEmpty(id) || "*".equals(id)) {
                 this.id = Metadata.ALL;
             }
         }

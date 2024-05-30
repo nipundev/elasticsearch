@@ -382,7 +382,7 @@ class S3BlobStore implements BlobStore {
     }
 
     public static StorageClass initStorageClass(String storageClass) {
-        if ((storageClass == null) || storageClass.equals("")) {
+        if ((storageClass == null) || "".equals(storageClass)) {
             return StorageClass.Standard;
         }
 
@@ -402,7 +402,7 @@ class S3BlobStore implements BlobStore {
      * Constructs canned acl from string
      */
     public static CannedAccessControlList initCannedACL(String cannedACL) {
-        if ((cannedACL == null) || cannedACL.equals("")) {
+        if ((cannedACL == null) || "".equals(cannedACL)) {
             return CannedAccessControlList.Private;
         }
 
